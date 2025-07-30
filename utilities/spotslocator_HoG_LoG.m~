@@ -1,0 +1,685 @@
+function [spots, signal, spheresout] = spotslocator_HoG_LoG(img, imgDec, GFP, DEC, signal, dims, spotsize, resXY, resZ, gaussfit, fileName, sigQual, minSigTh)
+%rrr
+% Spots
+% 1: X
+% 2: Y
+% 3: Z
+% 4: Volume
+% 5: Intensity
+% 6: Nucleus ID
+% 7: Position (distance to membrane)
+
+    fprintf('3D spots localisation\n');
+    imDec = double(imgDec);
+	imori = double(img);
+    GFP = double(GFP);
+    DEC = double(DEC);
+    
+    clear img imgDec
+    
+    sizeCrop = 3*max(spotsize)+1;
+    
+    sigLarge = imdilate(signal, strel('disk', sizeCrop));
+    
+    % Big Muff
+    transformed = Anscombe_forward(imDec);
+%     transformed = imgaussian(transformed, 5);
+    transformed = medfilt3(transformed, [3, 3, 3]);
+    if ~sigQual
+        for iz = 1:dims(3)
+            transformed(:,:,iz) = wiener2(transformed(:,:,iz), [sizeCrop sizeCrop]);
+        end
+    end
+    transformed = Anscombe_inverse_exact_unbiased(transformed);
+
+    if ~sigQual
+        transformed = imtophat(transformed, offsetstrel('ball', ceil(max(spotsize)*sqrt(3)), ceil(max(spotsize)*sqrt(3)*resZ/resXY)));
+    end
+
+	transformed = (transformed - min(transformed(:)))./(max(transformed(:))-min(transformed(:)));
+    % Frangi filter - Blob detection
+    
+	options3d = struct('HoGScaleRange', [min(spotsize)/sqrt(3), max(spotsize)],...%[sqrt(2)/2 sqrt(2)], ...%[1.5 2],...[spotsize(1)/sqrt(2) spotsize(end)], ...
+                   'HoGScaleRatio', sqrt(3)/3, ...%0.5, ...
+                   'HoGAlpha', 0.5, ...
+                   'HoGBeta', 0.5, ...
+                   'HoGC', 500, ...
+                   'BlackWhite', false, ...
+                   'verbose', true, ...
+                   'Output', 'max');
+               
+    [J] = HoG_blobs3D(transformed, options3d); %HoG_blobs3D(transformed, options3d);
+    J = (J-min(J(:)))./(max(J(:))-min(J(:)));
+    J(~sigLarge) = min(J(:));
+    
+    % MSER VL_FEAT !
+%     r = vl_mser(im2uint8(J), 'Delta', 1, 'MaxArea', 100/numel(J), 'MinArea', spotsize(1)/numel(J), 'MaxVariation', 0.5, 'MinDiversity', 0.1, 'BrightOnDark', 1, 'DarkOnBright', 0, 'Verbose');
+%     M = false(dims) ;
+%     for x=r'
+%         s = vl_erfill(im2uint8(J), x) ;
+%         M(s) = true;
+%     end
+    
+    % MSER CV toolbox
+    r2dareas = [floor(spotsize(1)), ceil(pi*3*spotsize(end))];
+    regions = cell([dims(3), 1]);
+    cc = cell([dims(3), 1]);
+    for ii = 1:dims(3)
+        [regions{ii},cc{ii}] = detectMSERFeatures(J(:,:,ii), 'ThresholdDelta', 0.8, 'RegionAreaRange', r2dareas, 'MaxAreaVariation', 1); %.5
+    end
+    M = false(dims);
+    for iz = 1:dims(3)
+        Mz = false(dims(1:2));
+        pl = cat(2, cc{iz}.PixelIdxList);
+        Mz(cell2mat(pl')) = true;
+        M(:,:,iz) = Mz;
+    end
+    
+    % Add connected spots to nuclei segmentation (for good measure)
+    switch class(signal)
+        case 'uint8'
+            M = im2uint8(M);
+        case 'uint16'
+            M = im2uint16(M);
+        case 'double'
+            M = max(signal(:)).*im2double(M);
+            
+    end
+    
+    signal = imreconstruct(signal, M+signal);
+%     Mbg = M;
+%     Mbg(signal >0) = 0;
+    M(signal == 0) = 0;
+    
+    % Watershed the spots since matlab mser tend to return non convex
+    % regions [mod 08/11/19]
+%     dmap = bwdist(~M);
+%     dmap(~M) = -Inf;
+%     ws = watershed(-dmap);
+    ws = watershed(-J);
+    M(ws == 0) = 0;
+    
+    clear dmap ws;
+    
+    % Get non bg ones (areas and HoG response) - mod [190924] th per nuc
+%     allin = imDec(signal > 0);
+    signalbg = signal;
+    signalbg(M>0) = 0;
+    CN0 = bwconncomp(signalbg);
+    CN = CN0;
+    CN.NumObjects = max(signalbg(:));
+    CN.PixelIdxList = cell([1 CN.NumObjects]);
+    for i = 1:CN.NumObjects
+        CN.PixelIdxList{i} = find(signalbg(:) == i); % [mod 22/11/19]
+    end % [/mod 12/11/19]
+    ths = cellfun(@(x) mean(DEC(x)) + minSigTh*std(DEC(x)), CN.PixelIdxList);%1.5*std
+
+    CC = bwconncomp(M, 6);
+    
+    % Clear ponctual spot detections
+    vol = cat(1, cellfun(@length, CC.PixelIdxList));
+    tokill = vol<9;
+    for icc = find(tokill)
+        M(CC.PixelIdxList{icc}) = 0;
+    end
+    CC.PixelIdxList(tokill) = [];
+    CC.NumObjects = CC.NumObjects - sum(tokill);
+    
+    % Return to spots intensity filtering on dec (to avoid out of focus light)
+    idnucs = cellfun(@(x) median(signal(x)), CC.PixelIdxList);
+    respI = cellfun(@(x) max(DEC(x)), CC.PixelIdxList);
+    
+    tokill = respI<ths(idnucs);
+    
+    for icc = find(tokill)
+        M(CC.PixelIdxList{icc}) = 0;
+    end
+    
+    idnucs(tokill) = [];
+    CC.PixelIdxList(tokill) = [];
+    CC.NumObjects = CC.NumObjects - sum(tokill);
+    
+    % Filter again on ori image
+    signalbg = signal;
+    signalbg(M>0) = 0;
+    
+    CN0 = bwconncomp(signalbg);
+    CN = CN0;
+    CN.NumObjects = max(signalbg(:));
+    CN.PixelIdxList = cell([1 CN.NumObjects]);
+    for i = 1:CN.NumObjects
+        CN.PixelIdxList{i} = find(signalbg(:) == i); % [mod 22/11/19]
+    end % [/mod 12/11/19]
+    
+    ths = cellfun(@(x) mean(GFP(x)) + minSigTh*std(GFP(x)), CN.PixelIdxList);
+    respI = cellfun(@(x) mean(GFP(x)), CC.PixelIdxList);
+    
+    tokill = respI<ths(idnucs);
+    
+    for icc = find(tokill)
+        M(CC.PixelIdxList{icc}) = 0;
+    end
+    CC.PixelIdxList(tokill) = [];
+    CC.NumObjects = CC.NumObjects - sum(tokill);
+    
+    % Extract spots information
+    spheres = bwlabeln(M, 6);
+    spheresout = zeros(size(spheres));
+    dmap = bwdist(~signal);
+    spotsCC = table2struct(regionprops3(spheres, GFP, 'Centroid', 'Volume', 'VoxelValues', 'Solidity'));%, 'PrincipalAxisLength'));
+%     sol = (cat(1, spotsCC.Solidity) -0.5)*2;
+%     pal = cat(1, spotsCC.PrincipalAxisLength);
+%     Ra = mean(pal(:,2:3), 2)./pal(:,1);
+%     banana = exp(-Ra./.7).*exp(-sol./.5);
+    
+    ske = bwskel(spheres>0);
+    ske_lab = ske.*spheres;
+    skeCC = table2struct(regionprops3(ske_lab, 'Volume'));
+    tau = ceil(4/3*pi*(max(spotsize)/2/sqrt(2))^3);
+    elong = cat(1,skeCC.Volume);
+    elong = 1-exp(-(elong-1)/tau);
+    
+    nbPosi = size(spotsCC, 1);
+    spots = zeros(nbPosi, 8);
+    
+    for ispot = 1:nbPosi
+        posi = round(spotsCC(ispot).Centroid);
+        spots(ispot,1) = posi(2);
+        spots(ispot,2) = posi(1);
+        spots(ispot,3) = posi(3);
+        spots(ispot,4) = spotsCC(ispot).Volume;
+        spots(ispot,5) = sum(spotsCC(ispot).VoxelValues);
+        spots(ispot,6) = signal(posi(2), posi(1), posi(3));
+        spots(ispot,7) = dmap(posi(2), posi(1), posi(3));
+        spots(ispot,8) = elong(ispot);
+    end
+    
+    % Remove outsiders
+    outsiders = spots(:, 6) == 0;
+    spots(outsiders,:) = [];
+    spotsCC(outsiders) = [];
+%     outsiders = cat(1, spotsCC.Solidity) < .7;
+%     spots(outsiders,:) = [];
+    
+    % Rebuilt spheres map
+    nbPosi = size(spots, 1);
+    for ispot = 1:nbPosi
+        sphereslab = spheres(spots(ispot,1), spots(ispot,2), spots(ispot, 3));
+        spheresout(spheres == sphereslab) = ispot;
+    end
+    fprintf('%d spots detected\n', nbPosi);
+end
+% 
+%     % GMM
+% %     eva = evalclusters(J(signal>0), 'gmdistribution', 'DaviesBouldin', 'Klist', 2:5);
+% %     
+% %     GMModel = fitgmdist(J(signal>0), eva.OptimalK, 'Replicates',10);
+% %     [~, idbright] = max(GMModel.mu);
+% %     idx = cluster(GMModel, J(:));
+% %     candidates = reshape(idx, dims) == idbright;
+% %     spotsCC = regionprops(candidates, 'Centroid');
+% %     nbPosi = size(spotsCC, 1);spotsCC = regionprops(M, 'Centroid');
+% %     nbPosi = size(spotsCC, 1)
+% 
+% %     thresh = 1.253*3.5*mad(J(:));
+% %     vals = mat2gray(J(J(:)>thresh));
+% %     
+% %     candidates = false(size(J));
+% %     candidates(J>thresh) = vals > 1.253*k*mad(vals);
+% %     
+% %     spotsCC = regionprops(candidates==1, 'centroid');
+% %     nbPosi = length(spotsCC);
+% %         
+% %     nbCells = max(signal(:));
+% %     k = 0;
+% %     nbPosi = inf;
+% %     while nbPosi > nbCells*10
+% %         candidates = false(size(J));
+% %         candidates(J>thresh) = vals > k*mad(vals);
+% %         
+% %         candidates(signal == 0) = false;
+% % 
+% %         spotsCC = regionprops(candidates==1, 'centroid');
+% %         nbPosi = length(spotsCC);
+% %         k = k+0.5;
+% %         if k == 10
+% %             break
+% %         end
+% %     end
+% %     if nbPosi <= 1
+% %         spots = [];
+% %         spheres = zeros(size(signal));
+% %         return
+% %     end
+% 
+%     nbCells = double(max(signal(:)));
+%     
+% %     [candidates] = FastFCMeans(im2uint8(J), 2) == 2;
+% %     Jquant = imquantize(J, multithresh(J(signal>0), 20));
+%     
+% %     maxvol = 4/3*pi*(3)^3;
+% %     for k = 1:19
+% %         candidates = Jquant > k;
+% %         spotsCC = regionprops(candidates, imori, 'centroid', 'Area');
+% %         nbPosi = length(spotsCC);
+% % 
+% %         if nbPosi < nbCells*10
+% %             allarea = cat(1, spotsCC.Area);
+% %             
+% %             if mean(allarea)+3*std(allarea) < maxvol
+% %                 break
+% %             end
+% %         end
+% %     end
+% %     
+% %     fprintf('Quantization level selected: %d/20\n', k);
+%     
+%     
+% %     maxvol = 4/3*pi*(3)^3;
+% %     for k = 19:-1:1
+% %         candidates = Jquant > k;
+% %         spotsCC = regionprops(candidates, imori, 'centroid', 'Area');
+% %         nbPosi = length(spotsCC);
+% % 
+% %         allarea = cat(1, spotsCC.Area);
+% %         if mean(allarea)+3*std(allarea) > maxvol
+% %             break
+% %         end
+% %     end
+% %     
+% %     fprintf('Quantization level selected: %d/20\n', k);
+%     
+% %     k = 3;
+% %     while nbPosi > 10*nbCells
+% %         [candidates] = FastFCMeans(im2uint8(J), k) == k;
+% %         spotsCC = regionprops(candidates, 'centroid');
+% %         nbPosi = length(spotsCC);
+% %         
+% %         k = k+1;
+% %         if k == 10
+% %             break
+% %         end
+% %     end
+%     
+%     posi = zeros(nbPosi, 5);
+%     for i = 1:nbPosi
+%         posi(i,1) = spotsCC(i).Centroid(2);
+%         posi(i,2) = spotsCC(i).Centroid(1);
+%         posi(i,3) = spotsCC(i).Centroid(3);
+%         posi(i,4) = 1;
+%         posi(i,5) = imori(round(posi(i,1)), round(posi(i,2)), round(posi(i,3)));
+%     end
+%     
+% %     spotsCC = regionprops(candidates>2, 'centroid');
+% %     nbPosi = length(spotsCC);
+% %     posi2 = zeros(nbPosi, 5);
+% %     for i = 1:nbPosi
+% %         posi2(i,1) = spotsCC(i).Centroid(2);
+% %         posi2(i,2) = spotsCC(i).Centroid(1);
+% %         posi2(i,3) = spotsCC(i).Centroid(3);
+% %         posi2(i,4) = 1;
+% %         posi2(i,5) = imori(round(posi2(i,1)), round(posi2(i,2)), round(posi2(i,3)));
+% %     end
+% %     
+% %     posi = cat(1, posi, posi2);
+%     posi(posi(:,3) == 1, :) = [];
+%     nbPosi = size(posi,1);
+% 
+%     fprintf('\t%d spot candidates found\n', nbPosi);
+% 
+%     if isempty(posi)
+%         return
+%     end
+%     fprintf('\tMerge close detections\n');
+%     if size(posi, 1) > 2
+%         T = clusterdata(posi(:,1:3), 'cutoff', min(spotsize)/sqrt(2), 'criterion', 'distance', ...
+%             'distance', @(XI, XJ) sqrt((XI(:,1) - XJ(:,1)).^2 + (XI(:,2) - XJ(:,2)).^2 + (0.2.*(XI(:,3) - XJ(:,3))).^2));
+%         nbSpots = max(T);
+%         spotsloc = zeros(nbSpots, 3);
+%         radii = zeros(nbSpots, 1);
+%         intensity = zeros(nbSpots, 1);
+%         for i = 1:nbSpots
+%             spotsloc(i,:) = mean(posi(T == i, 1:3), 1);
+%             radii(i) = median(posi(T == i, 4))./sqrt(2);
+%             intensity(i) = mean(posi(T == i, 5));
+%         end
+%         fprintf('\t%d candidates extracted\n', nbSpots);
+%     else
+%         spotsloc = posi(:,1:3);
+%         radii = posi(:,4)./sqrt(2);
+%         intensity = posi(:,5);
+%         nbSpots = size(posi, 1);
+%     end
+%     
+%     spotsloc_base = spotsloc;
+%     
+%     %% Template matching
+%     %%%% Template matching gaussian locations
+%     nbGauss = 50;
+%     gauss = cell([nbGauss, 2]);
+%     sigmas = 1:(max(spotsize)*sqrt(2)-1)/(nbGauss-1):(max(spotsize)*2*sqrt(2));
+%     for i_sig = 1:nbGauss
+%         gauss{i_sig, 1} = fspecial('gaussian', sizeCrop*2+1, sigmas(i_sig));
+%         gauss{i_sig, 2} = otsu(gauss{i_sig, 1}) == 2;
+%     end
+%     supergauss = fspecial('gaussian', sizeCrop*2+1, sizeCrop*2);
+%     
+%     circle = fspecial('disk', sizeCrop);
+% 
+% %     fiteval2 = zeros(nbSpots, nbGauss);
+%     fitqual = zeros(nbSpots, 1);
+%     
+%     boundimg = zeros(size(imori,1) + 2*sizeCrop, size(imori,2) + 2*sizeCrop, size(imori, 3));
+%     boundimg(sizeCrop+1:end-sizeCrop, sizeCrop+1:end-sizeCrop, :) = J; % imori
+%     
+%     for iFoci = 1:nbSpots
+%         pixI=sizeCrop+(round(spotsloc(iFoci, 1))-sizeCrop:round(spotsloc(iFoci, 1))+sizeCrop);
+%         pixJ=sizeCrop+(round(spotsloc(iFoci, 2))-sizeCrop:round(spotsloc(iFoci, 2))+sizeCrop);
+%         
+% %         circleIn = circle;
+% %         tk1 = pixI<1 | pixI>dims(1);
+% %         tk2 = pixJ<1 | pixJ>dims(2);
+% %         circleIn(tk1,:) = [];
+% %         circleIn(:,tk2) = [];
+% %         pixI(tk1)=[];
+% %         pixJ(tk2)=[];
+%         
+%         zz= mean(double(boundimg(pixI,pixJ,max([round(spotsloc(iFoci, 3)-radii(iFoci)), 1]):min([round(spotsloc(iFoci, 3)+radii(iFoci)), dims(3)]))),3);
+% %         zz = zz.*circleIn;
+%         zz = (zz-min(zz(:)))./(max(zz(:))-min(zz(:)));
+%         zzdata = [];
+%         
+%         fiteval = zeros(nbGauss,1);
+% 
+%         match = cell([nbGauss ,1]);
+%         for i_sig = 1:nbGauss
+% %             [moving_reg{i_sig}, R_reg{i_sig}] = imregister(gauss{i_sig}, zz, 'affine', optimizer,metric);
+% %             tform = imregtform(gauss{i_sig}, zz,'translation',optimizer,metric);
+% %             B{i_sig} = imwarp(gauss{i_sig},tform, 'FillValues', 0.5);
+%             [I_SSD, I_NCC, zzdata]=template_matching(gauss{i_sig, 1}, zz, zzdata);
+%             
+%             match{i_sig} = I_NCC.*I_SSD.*supergauss;
+%             fiteval(i_sig) = max(match{i_sig}(:));% sum(I_SSD{i_sig}(:));
+% %             fiteval2(iFoci, i_sig) = fiteval(i_sig);
+%         end
+%         
+%         [~, sid] = max(fiteval);
+%         joe = match{sid};
+%         [cx, cy] = find(match{sid}==max(match{sid}(:)));
+% 
+%         tform = affine2d([1, 0, 0;...
+%                           0, 1, 0;...
+%                           cx-sizeCrop-1, cy-sizeCrop-1, 1]);
+%                       
+%         RA = imref2d(size(gauss{sid, 2}));
+%         [placedMask0, RB] = imwarp(gauss{sid, 2}, RA, tform);
+%         [placedGauss0] = imwarp(gauss{sid, 1}, tform);
+%         
+%         placedMask = false(sizeCrop*2+1);
+%         placedGauss = zeros(sizeCrop*2+1);
+%         tokillx  = RA.XWorldLimits(1) - RB.XWorldLimits(1);
+%         tokilly  = RA.YWorldLimits(1) - RB.YWorldLimits(1);
+%         if tokillx>0
+%             placedMask(1:end-tokillx, :) = placedMask0(tokillx+1:end, :);
+%             placedGauss(1:end-tokillx, :) = placedGauss0(tokillx+1:end, :);
+%         else
+%             placedMask(-tokillx+1:end, :) = placedMask0(1:end+tokillx, :);
+%             placedGauss(-tokillx+1:end, :) = placedGauss0(1:end+tokillx, :);
+%         end
+%         if tokilly>0
+%             placedMask(:, 1:end-tokilly) = placedMask0(:, tokilly+1:end);
+%             placedGauss(:, 1:end-tokilly) = placedGauss0(:, tokilly+1:end);
+%             
+%             placedMask(:, end-tokilly+1:end) = 0;
+%             placedGauss(:, end-tokilly+1:end) = 0;
+%         else
+%             placedMask(:, -tokilly+1:end) = placedMask0(:, 1:end+tokilly);
+%             placedGauss(:, -tokilly+1:end) = placedGauss0(:, 1:end+tokilly);
+%             
+%             placedMask(:, 1:-tokilly) = 0;
+%             placedGauss(:, 1:-tokilly) = 0;
+%         end
+% %         placedMask(tk1,:) = [];
+% %         placedMask(:,tk2) = [];
+% %         placedGauss(tk1,:) = [];
+% %         placedGauss(:,tk2) = [];
+%         
+%         zzdata = zz(placedMask);
+%         zzdata = zzdata./sum(zzdata);
+%         zzest = placedGauss(placedMask);
+%         zzest = zzest./sum(zzest);
+%         
+%         spotsloc(iFoci,1) = spotsloc(iFoci, 1) + cx-sizeCrop-1;
+%         spotsloc(iFoci,2) = spotsloc(iFoci, 2) + cy-sizeCrop-1;
+%         
+%         if isempty(zzdata)
+%             fitqual(iFoci) = 0;
+%             continue
+%         end
+% 
+%         fitqual(iFoci) = corr(zzdata, zzest)^2;
+% %         fitqual(iFoci) = corr2(zz.*placedMask, placedGauss);
+% 
+%         radii(iFoci) = sigmas(sid).*1.5;
+%     end
+%     
+%     % Store data
+%     
+%     radius_base = radii;
+%     
+%     % Remove non gaussian spots
+%     radii(fitqual < gaussfit) = [];
+%     intensity(fitqual < gaussfit) = [];
+%     spotsloc(fitqual < gaussfit, :) = [];
+%     nbSpots = length(radii);
+%     
+%     % Store data
+%     spotsloc_fitted = spotsloc;
+%     radius_fitted = radii;
+%     intensity_fitted = intensity;
+%     
+%     % Fuse local clusters
+%     fprintf('\tRemove badly fitted candidates and fuse multiple detections\n');
+%     if size(spotsloc_fitted, 1) > 2
+%         T = clusterdata(spotsloc_fitted, 'cutoff', min(spotsize)*sqrt(2), ...
+%                             'criterion', 'distance', ...
+%                             'distance', @(XI, XJ) sqrt((XI(:,1) - XJ(:,1)).^2 + (XI(:,2) - XJ(:,2)).^2 + (0.2.*(XI(:,3) - XJ(:,3))).^2));
+%         nbSpots = max(T);
+%         spotsloc = zeros(nbSpots, 3);
+%         radii = zeros(nbSpots, 1);
+%         intensity = zeros(nbSpots, 1);
+%         for i = 1:nbSpots
+%             spotsloc(i,:) = mean(spotsloc_fitted(T == i, :), 1);
+%             radii(i) = median(radius_fitted(T == i));
+%             intensity(i) = mean(intensity_fitted(T == i));
+%         end
+%         
+%     else
+%         spotsloc = spotsloc_fitted;
+%         radii = radius_fitted;
+%         intensity = intensity_fitted;
+%     end
+%     fprintf('\t%d spots extracted\n', nbSpots);
+% 
+%     %% Get spots intensity and labels
+%     fprintf('\tGenerate 3D spot mask\n');
+%     [~, order] = sort(intensity, 'ascend');
+%     spots = zeros(nbSpots, 7);
+%     spheres = zeros(dims);
+% 
+% %     ft = fittype( @(a, b, c, d, e, f, x, y) a + b*exp(-((x-c).^2/(2*d^2) + (y-e).^2/(2*f^2))), ...
+% %         'independent', {'x', 'y'}, 'dependent', 'z');
+% %     maxim = max(imori, [], 3);
+% %     maxim = (maxim-min(maxim(:)))./(max(maxim(:))-min(maxim(:)));
+% 
+%     tokill = false(nbSpots, 1);
+%     for ispot = 1:nbSpots
+%         spotid = order(ispot);
+%         
+%         % Create 3D neighborhood
+%         voi_R = round(spotsloc(spotid, 1)) + (-ceil(radii(spotid)) : ceil(radii(spotid)));
+%         voi_C = round(spotsloc(spotid, 2)) + (-ceil(radii(spotid)) : ceil(radii(spotid)));
+%         voi_Z = round(spotsloc(spotid, 3)) + (-ceil(radii(spotid)) : ceil(radii(spotid)));
+%         
+%         voi_R = voi_R(voi_R<=dims(1));
+%         voi_R = voi_R(voi_R>0);
+%         voi_C = voi_C(voi_C<=dims(2));
+%         voi_C = voi_C(voi_C>0);
+%         voi_Z = voi_Z(voi_Z<=dims(3));
+%         voi_Z = voi_Z(voi_Z>0);
+% 
+%         
+%         % Create local sphere
+%         [XX, YY, ZZ] = meshgrid(voi_C, voi_R, voi_Z);
+%         
+%         sphere = (XX - spotsloc(spotid,2)).^2 + ...
+%                  (YY - spotsloc(spotid,1)).^2 + ...
+%                  ((ZZ - spotsloc(spotid,3)).*(resZ/resXY/2)).^2 <= radii(spotid)^2;
+% 
+%         spheres(voi_R, voi_C, voi_Z) = max(cat(4,spheres(voi_R, voi_C, voi_Z), double(sphere).*spotid), [], 4);
+%     end
+%     spheres = spheres.*(signal>0);
+%     distMap = bwdist(signal==0);
+%     
+%     fprintf('\tExtract spots information\n');
+%     tokill = false(nbSpots, 1);
+% 	reps=15;
+%     fprintf(['\t[',repmat(' ',1,reps),']']) %make the "background"
+%     imDecint = imori;
+%     did = 0;
+%     for i_spot = 1:nbSpots
+%         spotid = order(i_spot);
+%         
+%         sphereloc = spheres == spotid;
+%         
+%         spots(i_spot, 1:3) = spotsloc(spotid, :);
+%         spots(i_spot, 4) = sum(sphereloc(:));
+%         spots(i_spot, 5) = sum(imDecint(sphereloc));
+%         spots(i_spot, 6) = mode(double(nonzeros(signal(sphereloc))));
+%         % Add sphere to signal mask
+%         signal(sphereloc) = spots(i_spot, 6);
+%         
+% %         local = bwdist(~(signal == spotid));
+%         spots(i_spot, 7) = distMap(round(spotsloc(spotid, 1)), ...
+%                                  round(spotsloc(spotid, 2)), ...
+%                                  round(spotsloc(spotid, 3)));
+%         % Remove already counted intensity from image
+%         imDecint(sphereloc) = 0;
+%         
+%         % Test if spot outside nuclei
+%         if isnan(spots(i_spot, 6))
+%             tokill(i_spot) = true;
+%         % Test if spot darker than 2.5% of nuclei
+%         elseif spots(i_spot, 5) < 0.025*spots(i_spot, 4) % nuclei(spots(i_spot, 6))*intfit
+%             tokill(i_spot) = true;
+%         end
+% 		 
+% 		if sum(i_spot == round(1:(nbSpots/reps):nbSpots)) == 1
+%            fprintf(repmat('\b',1,reps+1-did)) %send the cursor back to the start
+%            did = did +1;
+%            fprintf('-');
+%            fprintf(repmat(' ',1,reps-did));
+%            fprintf(']');
+%         end
+%     end
+%     
+%     %% Remove detections outside nuclei and regenerate sphere image
+%     radii(tokill(order)) = [];
+%     spots(tokill, :) = [];
+%     nbSpots = size(spots, 1);
+%     
+%     spheres = zeros(dims);
+%     for ispot = 1:nbSpots
+%         % Create 3D neighborhood
+%         voi_R = round(spots(ispot, 1)) + (-ceil(radii(ispot)) : ceil(radii(ispot)));
+%         voi_C = round(spots(ispot, 2)) + (-ceil(radii(ispot)) : ceil(radii(ispot)));
+%         voi_Z = round(spots(ispot, 3)) + (-ceil(radii(ispot)) : ceil(radii(ispot)));
+%         
+%         voi_R = voi_R(voi_R<=dims(1));
+%         voi_R = voi_R(voi_R>0);
+%         voi_C = voi_C(voi_C<=dims(2));
+%         voi_C = voi_C(voi_C>0);
+%         voi_Z = voi_Z(voi_Z<=dims(3));
+%         voi_Z = voi_Z(voi_Z>0);
+% 
+%         
+%         % Create local sphere
+%         [XX, YY, ZZ] = meshgrid(voi_C, voi_R, voi_Z);
+%         
+%         sphere = (XX - spots(ispot,2)).^2 + ...
+%                  (YY - spots(ispot,1)).^2 + ...
+%                  ((ZZ - spots(ispot,3)).*(resZ/resXY/2)).^2 <= radii(ispot)^2;
+% 
+%         spheres(voi_R, voi_C, voi_Z) = max(cat(4,spheres(voi_R, voi_C, voi_Z), double(sphere).*ispot), [], 4);
+%     end
+%     spheres = spheres.*(signal>0);
+% %     if sum(tokill >0)
+% %         for i_spot = nbSpots:-1:1
+% %             if tokill(i_spot)
+% %                 spots(i_spot,:) = [];
+% %                 spheres(spheres == i_spot) = 0;
+% %                 for i_spotabove = i_spot+1:nbSpots
+% %                     spheres(spheres == i_spotabove) = i_spotabove -1;
+% %                 end
+% %             end
+% %         end
+% %     end
+%     nbSpots = size(spots,1);
+%     fprintf('\tSpots inside nuclei: %d\n', nbSpots);
+%     
+%     %% Kill dark spots (compared to their nuclear background)
+%     imbckg = imori;
+%     imbckg(spheres>0) = nan;
+%     
+%     ratio = zeros(nbSpots, 1);
+%     for i_spot = 1:nbSpots
+%         ratio(i_spot) = (spots(i_spot, 5)/spots(i_spot, 4))/nanmean(imbckg(signal == spots(i_spot, 6)));
+%     end
+%     tokill = ratio < 1.1;
+%     
+%     spots(tokill,:) = [];
+%     nbSpots = size(spots,1);
+%     fprintf('\tSpots kept after intensity filtering: %d\n', nbSpots);
+%     
+%     %% Write image
+%     Red = im2double(max(imori, [], 3));
+%     Red = (Red - min(Red(:)))./(max(Red(:))-min(Red(:)));
+%     Green = Red; Blue = Red;
+%     
+%     NucEdges = edge(max(signal, [], 3)>0, 'canny')>0;
+%     Red(NucEdges) = 1;
+%     Green(NucEdges) = 1;
+%     Blue(NucEdges) = 1;
+%     
+%     [YY, XX] = meshgrid(double(1:dims(2)), double(1:dims(1)));
+%     Spots_base = false(size(Red));
+%     Spots_fitted = false(size(Red));
+%     Spots_final = false(size(Red));
+%     for i_spot = 1:length(spotsloc_base)
+%         if i_spot <= length(spotsloc_fitted)
+%             map = (XX - spotsloc_fitted(i_spot, 1)).^2 + (YY - spotsloc_fitted(i_spot, 2)).^2 <= radius_fitted(i_spot)^2;
+%             Spots_fitted = Spots_fitted + edge(map)>0;
+%         end
+%         if i_spot <= length(spots)
+%             map = (XX - spots(i_spot, 1)).^2 + (YY - spots(i_spot, 2)).^2 <= radii(i_spot)^2;
+%             Spots_final = Spots_final + edge(map)>0;
+%         end
+%         map = (XX - spotsloc_base(i_spot, 1)).^2 + (YY - spotsloc_base(i_spot, 2)).^2 <= radius_base(i_spot)^2;
+%         Spots_base = Spots_base + edge(map)>0;
+%     end
+%     
+%     Red(Spots_base) = 0.8;
+%     Green(Spots_base) = 0;
+%     Blue(Spots_base) = 0;
+%     
+%     Red(Spots_fitted) = 0.8;
+%     Green(Spots_fitted) = 0.8;
+%     Blue(Spots_fitted) = 0;
+%     
+%     Red(Spots_final) = 0;
+%     Green(Spots_final) = 0.8;
+%     Blue(Spots_final) = 0;
+%     
+%     imwrite(cat(3, Red, Green, Blue), fileName);
+% 
+% end
