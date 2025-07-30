@@ -1,6 +1,8 @@
 # NuFoQ
 Yeast foci analysis from fluorescence microscopy images.
+
 Created by Mickaël Garnier (mickael.garnier@curie.fr) on June 15, 2021.
+
 Following the work done by the PICT@Pasteur and the UMR 3664 Taddei lab.
 
 # Script purpose
@@ -8,6 +10,7 @@ The NuFoQ matlab script performs quantitative analysis of foci in different yeas
 
 # Details
 Operating System: tested on Debian 11 and 12, Windows 7 and 10, Max OS 10.15.
+
 MATLAB: Requires version 2020b or newer.
 
 # Installation
