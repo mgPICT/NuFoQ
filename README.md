@@ -1,4 +1,4 @@
-# NuFoQ
+# NuFoQ -  Nuclear Foci Quantification
 Yeast foci analysis from fluorescence microscopy images.
 
 Created by Mickaël Garnier (mickael.garnier@curie.fr) on June 15, 2021.
