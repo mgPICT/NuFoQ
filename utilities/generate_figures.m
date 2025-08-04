@@ -1,6 +1,6 @@
 function generate_figures(analysisFolder, resultsFolder, params, onylOne, filename, loc)
 %% generate_figures
-%  Read qFOCI2 .nucs files and generate nice figures from the results. 
+%  Read NuFoQ .nucs files and generate nice figures from the results. 
 % 
 %% Output
 %  Figures designed with Antoine Hocher on R displaying:
@@ -13,8 +13,6 @@ function generate_figures(analysisFolder, resultsFolder, params, onylOne, filena
 %  Bonus figures:
 %      > Boxplots per yeastLines of intensities (absolutes and relatives)
 %      > Pdfs of relatives and absolutes intensities of spots
-%
-% Micka�l Garnier - UMR3664 - PICT@PASTEUR - 2016
 
 %% Initialisation
 % Get parameters and prepare folders
@@ -591,3 +589,4 @@ saveas(h_bp{3}, [graphDir, filesep, 'grouped_boxplot_spot_volumes.pdf']); close(
 saveas(h_bp{4}, [graphDir, filesep, 'grouped_boxplot_spot_relative_volumes.pdf']); close(h_bp{4});
 
 end
+
