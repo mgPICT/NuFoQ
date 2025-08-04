@@ -1,6 +1,16 @@
 function [ signal ] = segment3Dfcm( img3D, dims, spotsizedef, resXY, resZ, Sig_qual)
-%UNTITLED Summary of this function goes here
-%   Detailed explanation goes here
+% segment3Dfcm(img3D, dims, sposizedef, resXY, resZ, Sig_qual)
+% Performs 2D localisation of nuclei and nucleus-wise 3D segmentation
+% inputs:
+%    img3D       - 3D stack to segment
+%    dims        - dimensions of img3D
+%    spotsizedef - maximum radius of foci to remove
+%    resXY       - voxel width along X and Y axis
+%    resZ        - voxel depth
+%    Sig_qual    - boolean indicating low quality signal (discard some denoising)
+%
+% output: signal - 3D stack with labeled nuclei
+
 
         output = double(img3D);
         fprintf('3D segmentation in progress\n');
