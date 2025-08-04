@@ -30,4 +30,4 @@ options.WindowsStyle='modal';
 options.Interpreter='tex';
 
 output = inputdlg(name_parameters,'NuFoQ parameters', 1, params_default, options);
-end%function
+end
