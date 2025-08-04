@@ -191,7 +191,7 @@ end%function
 %% function LoadData_File_or_Folder_buttonGroup_Callback(source,eventdata)
 % Set the king of analysis: only on a single file (ANALYSE_FOLDER=0) or
 % on a whole folder (ANALYSE_FOLDER=1)
-function LoadData_File_or_Folder_buttonGroup_Callback(source,eventdata)
+function LoadData_File_or_Folder_buttonGroup_Callback(source,~)
 
 str=get(get(source,'SelectedObject'),'String');
 
@@ -212,7 +212,7 @@ end
 
 %% function checkbox_useTwoSets_callback(source,eventdata)
 % Set wether the segmentation is done using two sets of images or not
-function checkbox_useTwoSets_callback(source,eventdata)
+function checkbox_useTwoSets_callback(source,~)
     val = get(source,'Value');
     
     TWO_SETS = val;
@@ -228,7 +228,7 @@ end
 
 %% function checkbox_saveimgs_callback(source,eventdata)
 % Set the saving of images: checked (true) unchecked (false)
-function checkbox_saveimgs_callback(source,eventdata)
+function checkbox_saveimgs_callback(source,~)
 
 val=get(source,'Value');
 
@@ -247,7 +247,7 @@ end
 % Open a dialog box to specify where the files to analyzed are located. 
 % Depending the kind of analysis (single file or all file in a folder), the
 % program ask to specify the image or the folder to be analyzed.
-function Folder_pushbutton_Callback(hObject, eventdata, handles)
+function Folder_pushbutton_Callback(~, ~, ~)
 
 ANALYSE_FOLDER=getappdata(gcbf,'ANALYSE_FOLDER');
 START_PATH=getappdata(gcbf,'START_PATH');
@@ -277,7 +277,7 @@ setappdata(gcbf,'ANALYZE_PATHNAME',ANALYZE_PATHNAME);
 setappdata(gcbf,'ANALYZE_FILENAME',ANALYZE_FILENAME);
 end
 
-function Result_pushbutton_Callback(hObject, eventdata, handles)
+function Result_pushbutton_Callback(~, ~, ~)
 
 START_PATH=getappdata(gcbf,'START_PATH');
 
@@ -288,7 +288,7 @@ setappdata(gcbf,'RESULTS_PATHNAME',ANALYZE_PATHNAME);
 end
 
 %% function Params_pushbutton_Callback(hObject, eventdata, handles)
-function Params_pushbutton_Callback(hObject, eventdata, handles)
+function Params_pushbutton_Callback(~, ~, ~)
 PARAMS=getappdata(gcbf,'PARAMS');
 
 [params]=gui_params(PARAMS);
@@ -298,7 +298,7 @@ end
 
 
 %% function RunAnalysis_pushbutton_Callback(hObject, eventdata, handles)
-function RunAnalysis_pushbutton_Callback(hObject, eventdata, handles)
+function RunAnalysis_pushbutton_Callback(~, ~, ~)
 
 ANALYSE_FOLDER=getappdata(gcbf,'ANALYSE_FOLDER');
 ANALYZE_PATHNAME=getappdata(gcbf,'ANALYZE_PATHNAME');
@@ -307,13 +307,13 @@ RESULTS_PATHNAME=getappdata(gcbf,'RESULTS_PATHNAME');
 SAVE_IMGS = getappdata(gcbf,'SAVE_IMGS');
 PARAMS=getappdata(gcbf,'PARAMS');
 
-error = qFOCI_analysis(ANALYZE_PATHNAME, RESULTS_PATHNAME, SAVE_IMGS, PARAMS, ~ANALYSE_FOLDER, ANALYZE_FILENAME);
+error = NuFoQ_analysis(ANALYZE_PATHNAME, RESULTS_PATHNAME, SAVE_IMGS, PARAMS, ~ANALYSE_FOLDER, ANALYZE_FILENAME);
 if error > 0
     fprintf('%d images not processed', error);
 end
 end
 
-function FilterResults_pushbutton_Callback(hObject, eventdata, handles)
+function FilterResults_pushbutton_Callback(~, ~, ~)
 
 START_PATH = getappdata(gcbf,'START_PATH');
 ANALYSE_FOLDER=getappdata(gcbf,'ANALYSE_FOLDER');
@@ -326,7 +326,7 @@ PARAMS=getappdata(gcbf,'PARAMS');
 supervised_filtering_results(ANALYZE_PATHNAME, RESULTS_PATHNAME, SAVE_IMGS, PARAMS, ~ANALYSE_FOLDER, ANALYZE_FILENAME, START_PATH);
 end
 
-function DrawPlots_pushbutton_Callback(hObject, eventdata, handles)
+function DrawPlots_pushbutton_Callback(~, ~, ~)
 
 START_PATH = getappdata(gcbf,'START_PATH');
 ANALYSE_FOLDER=getappdata(gcbf,'ANALYSE_FOLDER');
@@ -337,7 +337,3 @@ PARAMS=getappdata(gcbf,'PARAMS');
 
 generate_figures(ANALYZE_PATHNAME, RESULTS_PATHNAME, PARAMS, ~ANALYSE_FOLDER, ANALYZE_FILENAME, START_PATH);
 end
-
-
-
-
