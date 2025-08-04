@@ -1,6 +1,6 @@
 function supervised_filtering_results(analysisFolder, resultsFolder,save_imgs, ~, onlyOne, filename, loc)
 %% supervised_filtering_results
-%  Read qFOCI2 .nucs files along with images for a supervised filtering of
+%  Read NoFoQ .nucs files along with images for a supervised filtering of
 %  the results
 % 
 %% Output
@@ -15,7 +15,7 @@ function supervised_filtering_results(analysisFolder, resultsFolder,save_imgs, ~
 %      > Boxplots per yeastLines of intensities (absolutes and relatives)
 %      > Pdfs of relatives and absolutes intensities of spots
 %
-% Micka�l Garnier - UMR3664 - PICT@PASTEUR - 2018
+% Micka�l Garnier - UMR3664 - PICT@PASTEUR - 2018 - 2025
 
 % Initiliaze colors
 Ckeep = [.25 .5 .25];
