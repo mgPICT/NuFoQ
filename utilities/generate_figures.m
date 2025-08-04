@@ -1,6 +1,6 @@
 function generate_figures(analysisFolder, resultsFolder, params, onylOne, filename, loc)
 %% generate_figures
-%  Read NuFoQ .nucs files and generate nice figures from the results. 
+%  Read NuFoQ .spots and .nucs files and generate nice figures from the results. 
 % 
 %% Output
 %  Figures designed with Antoine Hocher on R displaying:
@@ -589,4 +589,5 @@ saveas(h_bp{3}, [graphDir, filesep, 'grouped_boxplot_spot_volumes.pdf']); close(
 saveas(h_bp{4}, [graphDir, filesep, 'grouped_boxplot_spot_relative_volumes.pdf']); close(h_bp{4});
 
 end
+
 
