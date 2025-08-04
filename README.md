@@ -6,7 +6,7 @@ Created by Mickaël Garnier (mickael.garnier@curie.fr) on June 15, 2021.
 Following the work done by the PICT@Pasteur and the UMR 3664 Taddei lab.
 
 # Script purpose
-The NuFoQ matlab script performs quantitative analysis of foci in different yeast strains and/or conditions. A few parameters allow the users to target specific spots inside the nuclei and adapt to their image quality and specificities. A second step can be used to filter out spots and nuclei that are badly segmented or should not be  included in the following analysis. Finally NuFoQ can generate descriptive graphs to represent the data.
+The NuFoQ matlab script performs quantitative analysis of foci in different yeast strains and/or conditions. A few parameters allow the users to target specific spots inside the nuclei and adapt to their image quality and specificities. A second step can be used to filter out spots and nuclei that are badly segmented or should not be  included in the following analysis, such as dead cells. Finally NuFoQ can generate descriptive graphs to represent the data.
 
 # Details
 Operating System: tested on Debian 11 and 12, Windows 7 and 10, Max OS 10.15 and 11 and 12.
